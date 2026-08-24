@@ -53,10 +53,13 @@ def fill_args_llm(query,schema):
 
 
 def expand_query(query: str, tool_descriptions: list[dict]) -> str:
+    
+    capped = tool_descriptions[:10]
     tools_text = "\n".join(
         f"- {t['function']['name']}: {t['function'].get('description', '')}"
-        for t in tool_descriptions
+        for t in capped
     )
+    
     try:
         resp = _groq_client.chat.completions.create(
             model="openai/gpt-oss-20b",

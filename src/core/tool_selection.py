@@ -53,7 +53,7 @@ def index_tools(tools):
     logger.info(f"[TOOLS] indexed {len(tools)} tools dynamically")
 
 
-TOOL_CONFIDENCE_THRESHOLD = 0.5
+TOOL_CONFIDENCE_THRESHOLD = 0.45
 REMOTE_TOOL_CONFIDENCE_THRESHOLD = 0.35
 
 def select_relevant_tools(tools: list[dict], query: str, top_k: int = 2, remote_tool_names: set = None) -> list[dict]:
@@ -61,7 +61,8 @@ def select_relevant_tools(tools: list[dict], query: str, top_k: int = 2, remote_
     if len(tools) <= top_k:
         return tools
 
-    normalized = expand_query(query, tools)
+    sample_tools = tools[:5]
+    normalized = expand_query(query, sample_tools)
     collection = _chroma_client.get_or_create_collection(name="tools", embedding_function=_get_embedder())
 
     if not _tools_indexed:

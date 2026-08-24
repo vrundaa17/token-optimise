@@ -13,6 +13,7 @@ def _get_vectorstore():
     global _embeddings, _splitter, _vectorstore, _reranker
     
     if _vectorstore is None:
+        
         from langchain_text_splitters import RecursiveCharacterTextSplitter
         from langchain_huggingface import HuggingFaceEmbeddings
         from langchain_chroma import Chroma
