@@ -1,0 +1,12 @@
+{
+  "remotes": [
+    {
+      "name": "gmail",
+      "url": "https://gmailmcp.googleapis.com/mcp/v1"
+    },
+    {
+      "name": "notion",
+      "url": "https://mcp.notion.com/sse"
+    }
+  ]
+}

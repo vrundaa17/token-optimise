@@ -6,6 +6,26 @@ from config import PROJECT_ROOT
 logger = logging.getLogger("token")
 
 DB_PATH = os.path.join(PROJECT_ROOT, "storage", "token_events.db")
+import time
+import uuid
+
+CONVERSATION_TIMEOUT_MINUTES = 15
+_current_conversation_id = None
+_last_event_time = None
+
+def _get_or_create_conversation_id():
+    global _current_conversation_id, _last_event_time
+    now = time.time()
+    if (
+        _current_conversation_id is None
+        or _last_event_time is None
+        or (now - _last_event_time) > CONVERSATION_TIMEOUT_MINUTES * 60
+    ):
+        _current_conversation_id = str(uuid.uuid4())[:8]
+    _last_event_time = now
+    return _current_conversation_id
+
+
 import threading
 _local = threading.local()
 
@@ -14,10 +34,7 @@ def get_thread_connection():
         _local.conn = get_connection()
         init_db(_local.conn)
     return _local.conn
-
-
-
-    
+  
     
 def get_connection():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -44,13 +61,21 @@ def init_db(conn):
             success  INTEGER DEFAULT 1
         )
     """)
+    try:
+        conn.execute("ALTER TABLE events ADD COLUMN conversation_id TEXT")
+        conn.commit()
+    except Exception:
+        pass
+    
     conn.commit()
     logger.info(f"[DB] initialized at {DB_PATH}")
 
+
 def insert_event(**kwargs):
     conn = get_thread_connection()
-    # init_db(conn)  
+    kwargs.setdefault("conversation_id", _get_or_create_conversation_id())
     fields = [
+        "conversation_id",
         "tool_name", "query", "cache_hit", "cache_similarity",
         "tokens_before_trim", "tokens_after_trim", "trim_saved",
         "schema_tokens_full", "schema_tokens_selected", "schema_tokens_saved",
@@ -68,7 +93,9 @@ def insert_event(**kwargs):
 def close_thread_connection():
     if hasattr(_local, 'conn') and _local.conn is not None:
         _local.conn.close()
-        _local.conn = None   
+        _local.conn = None  
+         
+         
 def get_summary(conn):
     return conn.execute("""
         SELECT
@@ -155,3 +182,20 @@ def get_token_analysis(conn):
         "cost_saved_usd": round(total_saved * usd_per_token, 6),
         "cost_saved_inr": round(total_saved * inr_per_token, 4)
     }
+    
+def get_conversation_stats(conn, limit=20):
+    return conn.execute("""
+        SELECT
+            conversation_id,
+            MIN(timestamp) as started_at,
+            COUNT(*) as total_calls,
+            SUM(cache_hit) as cache_hits,
+            SUM(trim_saved) as trim_saved,
+            SUM(schema_tokens_saved) as schema_saved,
+            SUM(trim_saved + schema_tokens_saved) as total_saved
+        FROM events
+        WHERE conversation_id IS NOT NULL
+        GROUP BY conversation_id
+        ORDER BY started_at DESC
+        LIMIT ?
+    """, (limit,)).fetchall()

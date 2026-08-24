@@ -228,6 +228,41 @@ if docs is not None:
 
 st.divider()
 
+# ── conversation breakdown ────────────────────────────────────────────────────
+conv_data = fetch("/metrics/conversations")
+if conv_data:
+    st.subheader("💬 Per-Conversation Token Savings")
+    st.caption("15-min idle gap = new conversation")
+    df_conv = pd.DataFrame(conv_data)
+    for col in ["total_saved", "trim_saved", "schema_saved", "cache_hits", "total_calls"]:
+        if col in df_conv.columns:
+            df_conv[col] = df_conv[col].fillna(0).astype(int)
+    st.dataframe(
+        df_conv[["conversation_id", "started_at", "total_calls", "cache_hits", "trim_saved", "schema_saved", "total_saved"]],
+        use_container_width=True,
+        hide_index=True
+    )
+    if len(df_conv) > 1:
+        fig_conv = px.bar(
+            df_conv,
+            x="conversation_id",
+            y="total_saved",
+            color="total_saved",
+            labels={"conversation_id": "Conversation", "total_saved": "Tokens Saved"},
+            color_continuous_scale="Blues"
+        )
+        fig_conv.update_layout(
+            paper_bgcolor="#0f1117",
+            plot_bgcolor="#1a1d27",
+            font_color="#e0e0e0",
+            height=280,
+            showlegend=False,
+            margin=dict(t=10, b=10)
+        )
+        st.plotly_chart(fig_conv, use_container_width=True)
+        
+        
+st.divider()       
 # ── recent events ─────────────────────────────────────────────────────────────
 events = fetch("/metrics/events?limit=50")
 if events and len(events) > 0:

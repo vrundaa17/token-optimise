@@ -1,7 +1,7 @@
 from groq import Groq
 from config import settings,PROJECT_ROOT
 import chromadb
-import os,sys,json
+import os,json
 import logging
 
 logger = logging.getLogger("token")
@@ -28,10 +28,12 @@ def fill_args_llm(query,schema):
         - Fill all required fields
         - Use null for optional fields you cannot determine
         - Keep values concise
+        - For file paths: always use full absolute paths. Desktop = /Users/<username>/Desktop/ on Mac, /home/<username>/Desktop/ on Linux
+        - The current user's home directory is: {os.path.expanduser('~')}
 
         JSON:
     """
-    
+        
     
     try:
         response = _groq_client.chat.completions.create(
