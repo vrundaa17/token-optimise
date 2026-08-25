@@ -27,10 +27,16 @@ from core.db import get_connection, init_db, insert_event
 # logging.basicConfig(level=logging.INFO, stream=sys.stderr,
 #     format="%(asctime)s [%(levelname)s] %(message)s")
 
+from logging.handlers import RotatingFileHandler
+
 logging.basicConfig(
     level=logging.INFO,
     handlers=[
-        logging.FileHandler(os.path.join(_project_root, "server.log")),
+        RotatingFileHandler(
+            os.path.join(_project_root, "server.log"),
+            maxBytes=5 * 1024 * 1024,  # 5MB per file
+            backupCount=3              # keep 3 old files
+        ),
         logging.StreamHandler(sys.stderr)
     ],
     format="%(asctime)s [%(levelname)s] %(message)s"
@@ -150,10 +156,8 @@ def _load_remote_servers():
             continue
         
         if token:
-            # Pass token directly via header — bypasses OAuth flow entirely
             args = ["-y", "mcp-remote", url, "--header", f"Authorization:Bearer {token}"]
         else:
-            # Use full OAuth flow (works for Gmail, Notion, etc.)
             args = ["-y", "mcp-remote", url]
         
         servers.append(StdioServerParameters(
@@ -165,9 +169,10 @@ def _load_remote_servers():
     
     return servers
 
-# DOWNSTREAM_SERVERS, _config_path, _backup_path = _load_from_claude_config()
+
 DOWNSTREAM_SERVERS, _config_path, _backup_path = _load_from_claude_config()
 DOWNSTREAM_SERVERS.extend(_load_remote_servers())
+
 # DOWNSTREAM_SERVERS = [
 #     StdioServerParameters(
 #         command="npx",
@@ -180,6 +185,10 @@ DOWNSTREAM_SERVERS.extend(_load_remote_servers())
 # ]
 _server_started = False
 _restored = False
+_session_tasks: list = []
+_shutdown_event: asyncio.Event = None
+
+
 def _restore_claude_config(backup_path, config_path):
     global _restored
     if _restored:
@@ -195,25 +204,38 @@ def _restore_claude_config(backup_path, config_path):
     os.remove(backup_path)
     logger.info("[RESTORE] restored claude config from backup")
     
-_session_tasks: list = []
-_shutdown_event: asyncio.Event = None
+
+
+
 
 async def _run_persistent_session(server_params: StdioServerParameters, shutdown_event: asyncio.Event):
     key = str(server_params.args)
-    try:
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                _persistent_sessions[key] = session
-                logger.info(f"[SESSION] persistent session ready: {server_params.args}")
-                await shutdown_event.wait()
-    except asyncio.CancelledError:
-        pass
-    except Exception as e:
-        logger.error(f"[SESSION] session error for {server_params.args}: {e}")
-    finally:
-        _persistent_sessions.pop(key, None)
-        logger.info(f"[SESSION] session closed: {server_params.args}")
+    retry_delay=5
+    max_delay=60    # 1-5s, 2-10s,
+    while shutdown_event.is_set():
+        try:
+            async with stdio_client(server_params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    _persistent_sessions[key] = session
+                    retry_delay=5
+                    logger.info(f"[SESSION] persistent session ready: {server_params.args}")
+                    await shutdown_event.wait()
+                    
+        except asyncio.CancelledError:
+            break
+        
+        except Exception as e:
+            _persistent_sessions.pop(key, None)
+            if shutdown_event.is_set():
+                break
+            logger.warning(f"[SESSION] session dropped for {server_params.args}: {e} — retrying in {retry_delay}s")
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, max_delay)
+
+    _persistent_sessions.pop(key, None)
+    logger.info(f"[SESSION] session closed: {server_params.args}")
+
 
 
 async def _watch_config_loop(config_path: str, backup_path: str):
@@ -224,7 +246,7 @@ async def _watch_config_loop(config_path: str, backup_path: str):
         await asyncio.sleep(30)
         try:
             if not os.path.exists(backup_path):
-                break  # already restored, stop watching
+                break
 
             with open(config_path) as f:
                 live = json.load(f)
@@ -387,7 +409,10 @@ async def lifespan(server):
                 _run_persistent_session(server_params, _shutdown_event)
             )
             _session_tasks.append(task)
-        logger.info("[STARTUP] background init done")
+        logger.info("[STARTUP] sessions started — pre-indexing tools...")
+        await asyncio.sleep(3)
+        await get_tools()
+        logger.info("[STARTUP] tools pre-indexed — ready")
 
     asyncio.create_task(_background_startup())
 
@@ -452,13 +477,13 @@ app = FastMCP("token", lifespan=lifespan)
 #---------------------------------------------------------------------------------------------------------------------------
 
 # @app.tool(description="Use this for any file system task — listing files, reading files, searching files, writing files. Pass the full natural language request as the query.")
-@app.tool(description=(
-    "ALWAYS call this tool FIRST before doing ANY task — file operations, "
-    "Gmail searches, Notion queries, memory lookups, document search, everything. "
-    "This is MANDATORY. Do not call any other tool directly without calling find_tool first. "
-    "For file paths on Desktop, always expand to full absolute path like /Users/name/Desktop/filename.pdf"
-))
-async def find_tool(query: str) -> str:
+@app.tool(
+    description=(
+        "Use this to perform ANY task — file operations, Gmail, Notion, "
+        "memory, documents, everything. Always call this first for any request. "
+        "For file paths on Desktop, always expand to full absolute path like /Users/name/Desktop/filename.pdf"
+    ))
+async def execute(query: str) -> str:
     logger.info(f"find_tool called | query: {query}")
     
     if not query or not query.strip():
@@ -515,9 +540,20 @@ async def find_tool(query: str) -> str:
         )
 
     args = fill_args_llm(query, schema)
+    if "_groq_error" in (args or {}):
+        error_msg = args["_groq_error"]
+        logger.warning(f"[ARGS] Groq failed for {tool_name}: {error_msg}")
+        asyncio.create_task(asyncio.to_thread(lambda: insert_event(
+            tool_name=tool_name, query=query, cache_hit=0, success=0)))
+        return (
+            f"Could not prepare arguments for '{tool_name}' — "
+            f"the AI argument filler is temporarily unavailable. "
+            f"Please try rephrasing your request more specifically."
+        )
     if not args:
         logger.warning(f"[ARGS] LLM failed for {tool_name}")
         args = {}
+
     logger.info(f"selected: {tool_name} | args: {args}")
 
     for attempt in range(2):
@@ -755,10 +791,9 @@ def token_prompt() -> str:
     return """
     MANDATORY RULES — follow these strictly, no exceptions:
 
-    RULE 1: Before calling ANY tool (Gmail, Notion, filesystem, memory, PDF, anything),
-    you MUST call token:find_tool first with a description of the task.
-    find_tool will tell you exactly which tool to call and how.
-    Never skip this step. Never call tools directly.
+    RULE 1: For ANY task — files, Gmail, Notion, memory, PDFs, anything —
+    always call token:execute first with a description of the task.
+    Never call other tools directly. Always go through token:execute.
 
     RULE 2: For PDF questions, call token:list_indexed_documents first,
     then token:ask_document.
@@ -768,5 +803,8 @@ def token_prompt() -> str:
     Violating RULE 1 wastes tokens. Always go through find_tool.
     """
 #    
+# if __name__ == "__main__":
+#     app.run(transport="stdio")
+
 if __name__ == "__main__":
-    app.run(transport="stdio")
+    app.run(transport="http", host="127.0.0.1", port=8080)

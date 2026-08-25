@@ -46,9 +46,22 @@ def fill_args_llm(query,schema):
         args = json.loads(response)
         return {k: v for k, v in args.items() if v is not None}
     
+    except json.JSONDecodeError as e:
+        logger.warning(f"[GROQ] failed to parse args JSON: {e} — trying schema defaults")
+        try:
+            required = schema.get("required", [])
+            props = schema.get("properties", {})
+            fallback = {}
+            for field in required:
+                field_type = props.get(field, {}).get("type", "string")
+                fallback[field] = "" if field_type == "string" else None
+            logger.info(f"[GROQ] fallback args: {fallback}")
+            return fallback
+        except Exception:
+            return {}
     except Exception as e:
         logger.warning(f"[GROQ] fill_args_llm failed: {e}")
-        return {}
+        return {"_groq_error": str(e)}
 
 
 

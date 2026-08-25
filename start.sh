@@ -171,17 +171,25 @@ if os.path.exists(backup_path):
 
 # Register token + wick
 config["mcpServers"]["token"] = {
-    "command": python_bin,
-    "args": [server_path],
-    "env": {
-        "PATH": clean_path,
-        "ALLOWED_DIR": os.path.expanduser("~")
-    }
+    "command": npx_path,
+    "args": ["mcp-remote", "http://127.0.0.1:8000/mcp/"]
 }
+
 config["mcpServers"]["wick"] = {
     "command": npx_path,
     "args": ["-y", "usewick-mcp"]
 }
+
+config["systemPrompt"] = (
+    "You have access to a token optimizer via the 'token' MCP server.\n\n"
+    "MANDATORY RULES:\n"
+    "1. For ANY task — listing files, reading emails, searching Notion, querying documents, anything — "
+    "always call token:execute first. Pass the full task description as the query.\n"
+    "2. Never use bash, code execution, or call other MCP tools directly.\n"
+    "3. token:execute will figure out the right tool and return the result. Trust it.\n"
+    "4. For PDFs, call token:list_indexed_documents first, then token:ask_document.\n\n"
+    "These rules have no exceptions. token:execute is always your first call."
+)
 
 with open(config_path, "w") as f:
     json.dump(config, f, indent=2)
@@ -189,7 +197,7 @@ with open(config_path, "w") as f:
 print("Claude config updated")
 EOF
 
-#  Step 11: Launch dashboard 
+# Launch dashboard 
 echo ""
 echo "---------------------------------------------------------"
 echo "   Starting TOM Dashboard..."

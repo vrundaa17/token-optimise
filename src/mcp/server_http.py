@@ -1,26 +1,59 @@
 import signal,subprocess,atexit
 import sys,uvicorn
-import os
+import os,time
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, project_root)
 
 from fastapi import FastAPI
-import logging
+from fastmcp.utilities.lifespan import combine_lifespans
+import logging, contextlib
 from src.core.db import get_connection, init_db, get_summary, get_recent_events, get_tool_stats, get_token_analysis,get_conversation_stats
 from src.core.document_search import list_index_doc
-
+from src.mcp.server import _persistent_sessions
+from src.mcp.server import app as mcp_app
 
 _dash_conn = get_connection()
 init_db(_dash_conn)
+_start_time = time.time()
 
-api = FastAPI(title="token")
+@contextlib.asynccontextmanager
+async def _dashboard_lifespan(app: FastAPI):
+    yield
+
+mcp_http = mcp_app.http_app(path="/", transport="sse")
+api = FastAPI(title="token", lifespan=combine_lifespans(_dashboard_lifespan, mcp_http.lifespan))
+api.mount("/mcp", mcp_http)
+
 
 logger = logging.getLogger("token")
 
 
 @api.get("/health")
 async def health():
-    return {"status": "ok", "server": "token-optim", "version": "1.0"}
+    uptime = int(time.time() - _start_time)
+    hours = uptime // 3600
+    minutes = (uptime % 3600) // 60
+    seconds = uptime % 60
+
+    tools_indexed = 0
+    try:
+        from src.core.client import _chroma_client
+        collection = _chroma_client.get_or_create_collection("tools")
+        tools_indexed = collection.count()
+    except Exception:
+        pass
+
+    sessions_active = len(_persistent_sessions) if '_persistent_sessions' in dir() else 0
+
+    return {
+        "status": "ok",
+        "uptime": f"{hours}h {minutes}m {seconds}s",
+        "tools_indexed": tools_indexed,
+        "sessions_active": sessions_active,
+        "groq": "ok" if os.getenv("GROQ_API_KEY") else "missing"
+    }
+    
+
 
 @api.get("/metrics/summary")
 async def metrics_summary():
@@ -70,7 +103,7 @@ if __name__ == "__main__":
          "--server.port", "8501", "--server.headless", "true"],
         cwd=project_root
     )
-    print(f"[LAUNCHER] Streamlit started (pid {streamlit_proc.pid}) | http://localhost:8501")
+    logger.info(f"[LAUNCHER] Streamlit started (pid {streamlit_proc.pid}) | http://localhost:8501")
 
     def _kill_streamlit():
         if streamlit_proc.poll() is None:
@@ -86,5 +119,5 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, _forward_signal)
     signal.signal(signal.SIGINT, _forward_signal)
 
-    print("[LAUNCHER] FastAPI started → http://localhost:8000")
+    logger.info("[LAUNCHER] FastAPI started - http://localhost:8000")
     uvicorn.run(api, host="0.0.0.0", port=8000)
