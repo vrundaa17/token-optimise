@@ -1,22 +1,22 @@
-# Token-Optimised MCP Server
+# 🦾 Token-optimeee
 
-A middleware MCP server that sits between Claude Desktop and downstream MCP servers to reduce token consumption through semantic caching, dynamic tool selection, and response trimming.
+A middleware MCP server that sits between Claude Desktop and your downstream MCP servers — reducing token consumption through semantic caching, dynamic tool selection, and response trimming.
 
-**Status:** Production-ready | **Model:** Claude Haiku 4.5 Extended | **LLM Backend:** Groq / Llama 3.3 70B
+**LLM Backend:** Groq | **Vector Store:** ChromaDB | **Dashboard:** Streamlit
 
 ---
 
 ## 🎯 What Problem This Solves
 
-Every Claude Desktop session re-sends the full tool schema for every connected MCP server. With 23+ tools registered, that's **thousands of tokens injected into each prompt** — even when the query only needs one tool.
+Every Claude Desktop session sends the full schema of every connected MCP tool with every prompt. With 23+ tools registered, that's thousands of tokens injected per query — even when only one tool is needed.
 
-This project optimises at three levels:
+Token-optimeee optimises at three levels:
 
-1. **Semantic Tool Selection** — Only send tools relevant to the current query via ChromaDB similarity search
-2. **Semantic Caching** — Skip LLM/tool calls entirely for repeated or similar queries (similarity ≥ 0.8)
-3. **Response Trimming** — Truncate verbose tool responses to ≤500 tokens before entering context window
+1. **Semantic Tool Selection** — Only the most relevant tool schema is sent to Claude per query (ChromaDB similarity search)
+2. **Semantic Caching** — Repeated or similar queries skip tool calls entirely and return cached answers (similarity ≥ 0.8)
+3. **Response Trimming** — Verbose tool responses are trimmed to ≤200 tokens before entering the context window
 
-**Result:** ~15-18% average token reduction per query
+**Real result from testing:** 91.8% schema token reduction per call.
 
 ---
 
@@ -25,7 +25,8 @@ This project optimises at three levels:
 .
 ├── README.md                       
 ├── config.py                      # Settings & env loading
-├── start.sh                       # One-command setup
+├── start.sh                       # One-click setup and launch
+├── stop.sh                        # One-click
 ├── requirements.txt               # Python dependencies
 ├── remote_servers.json            # Remote MCP URLs
 │
@@ -104,180 +105,126 @@ This project optimises at three levels:
 
 ---
 
-## 🔧 How Each Component Works
-
-### 1. **find_tool** (Main Orchestrator)
-
-Entry point for all file/memory operations. When you use `find_tool`:
-
-1. Check cache — if similar query was asked before (similarity ≥ 0.8), return cached answer instantly
-2. Select relevant tools — query ChromaDB to find the most relevant downstream tool (only 1)
-3. Run the tool — execute it on filesystem/memory
-4. Trim response — cap output at 500 tokens to save space
-5. Store in cache — save answer for future similar queries
-6. Log everything — record to SQLite for analytics
-
----
-
-### 2. **Semantic Cache** (`core/cache.py`)
-
-Avoids redundant tool calls for similar queries.
-
-- Embeds your query with SentenceTransformer
-- Searches past queries in ChromaDB
-- If similarity score ≥ 0.8 and answer is fresh → return cached answer instantly
-- Tool-specific cache lifetimes:
-  - `find_tool`: 5 minutes
-  - `ask_document`: 24 hours
-  - `list_indexed_documents`: 1 minute
-  - Others: 1 hour
-
-**Example:** Ask "What files do I have?" → stored. Ask "Show me my files" (similar) → instant hit, zero LLM calls.
-
----
-
-### 3. **Tool Selection** (`core/tool_selection.py`)
-
-Picks the right tool from 23+ available options.
-
-- Indexes all tool schemas (name, description, args) in ChromaDB on startup
-- When query arrives, semantic search finds the most relevant tool
-- Returns only that tool's schema to Claude
-
-**Why it matters:** Without this, Claude sees all 23 tool schemas (~2000 tokens). With this, Claude sees only 1 tool (~50 tokens). Per query savings: ~1600 tokens of schema boilerplate.
-
----
-
-### 4. **Response Trimmer** (`core/trim.py`)
-
-Caps tool responses at ≤500 tokens.
-
-- Some tools return entire file contents or large result sets
-- Instead of sending 2000+ tokens of response, trim to 500
-- Cuts at sentence boundaries to preserve readability
-- Adds transparent note: "[Trimmed: 2000 → 500 tokens]"
-
----
-
-### 5. **Token Audit** (`core/db.py`)
-
-Logs every prompt/response to SQLite:
-- Query text
-- Tool used
-- Cache hit/miss
-- Tokens before/after trim
-- Cost (₹ and $)
-- Timestamp
-
-Powers the dashboard analytics.
-
----
-
-### 6. **Document Search & RAG** (`core/document_search.py`)
-
-Index and search PDFs with semantic search.
-
-**Exposed tools:**
-- `index_document` — Load PDF, chunk, embed, store
-- `ask_document` — RAG search on specific document
-- `search_all_documents` — Search across all indexed docs
-- `index_documents_folder` — Batch index folder of PDFs
-
----
-
-### 7. **Dashboard** (`src/front.py`)
-
-Real-time analytics Streamlit UI showing:
-- Live Claude session metrics
-- Token savings breakdown (schema + trim)
-- Cache hit rate
-- Per-tool usage stats
-- Indexed documents
-- Recent events log
-
-**Access at:** `http://localhost:8501`
-
----
-
-## 🚀 Quick Start
+## 🚀 Setup — One Command
 
 ### Prerequisites
 - Python 3.10+
-- Node.js (for npx)
-- Groq API key
+- Node.js + npx
+- Groq API key (free at [console.groq.com](https://console.groq.com))
 - Claude Desktop (latest)
 
-### 1. Install Dependencies
+### Run
+
+## Run
+
 ```bash
-pip install -r requirements.txt
+chmod +x tom.sh
+./token.sh start     # start
+./token.sh stop      # stop
+./token.sh restart   # restart
+./token.sh status    # check if running
 ```
 
-### 2. Configure Environment
-Create `.env`:
-```env
-GROQ_API_KEY=your_groq_api_key_here
-EMBEDDER=all-MiniLM-L6-v2
-```
+That's it. The script will:
+- Check Python and Node are installed
+- Create a virtual environment and install packages (first run: 4-5 mins)
+- Create `.env` from `.env.example` and prompt you to add your Groq key
+- Close Claude Desktop automatically
+- Write the MCP config
+- Start the server in the background (terminal can be closed)
+- Open the dashboard in your browser
+- Reopen Claude Desktop
 
-### 3. Run Setup
+### Stop
+
 ```bash
-bash start.sh
+./stop.sh
 ```
 
-This will:
-- Detect your Claude Desktop config
-- Register the  MCP server
-- Register Wick tracking MCP
-- Start FastAPI backend
-- Launch Streamlit dashboard
-
-### 4. Restart Claude Desktop
-- Close and reopen Claude Desktop
-- You'll now have `find_tool` + document search tools available
-
-### 5. Access Dashboard
-Navigate to: `http://localhost:8501`
+Or click the **⏹ Stop TOM** button in the dashboard.
 
 ---
 
-## 📊 Dashboard Metrics
+## 🔧 Ports
+
+| Service | Port |
+|---|---|
+| FastAPI / MCP | 7737 |
+| Streamlit Dashboard | 7738 |
+
+These are intentionally non-default to avoid conflicts with other projects.
+
+---
+
+## 💬 For Best Results — Tell Claude to Use TOM
+
+Claude Desktop has its own built-in tools (memory, web search) that it may prefer by default. For consistent routing through TOM, start each conversation with:
+
+> Use token:execute for every task. Never call other tools directly.
+
+For PDF tasks specifically:
+> First call token:list_indexed_documents, then token:ask_document.
+
+**Why is this needed?** Claude decides which tool to call — TOM can't force it. The system prompt in the config nudges Claude, but an explicit instruction in the chat is the most reliable way to ensure TOM is used. This is an honest limitation of how Claude Desktop works, not a bug in TOM.
+
+---
+
+## 📊 Dashboard
+
+Access at `http://localhost:7738`
 
 | Metric | What it means |
 |---|---|
-| **Cache Hits** | # of queries that skipped tool calls |
-| **Cache Hit Rate** | % of queries that hit cache |
-| **Schema Tokens Saved** | Tokens saved by showing only relevant tools |
-| **Trim Tokens Saved** | Tokens saved by capping responses at 500 |
-| **Total Saved** | Sum of schema + trim savings |
+| **Schema Tokens Without TOM** | Tokens Claude would receive with all tool schemas |
+| **Schema Tokens With TOM** | Tokens Claude actually received (1 selected schema) |
+| **Total Tokens Saved** | Schema savings + response trim savings |
+| **Cache Hit Rate** | % of queries that returned cached answers |
+| **Real Groq Token Usage** | Exact token counts from Groq API (not estimates) |
+| **Cost Saved** | Estimated savings based on Sonnet 4.6 pricing |
+
+> **Note:** Cost estimates use Claude Sonnet 4.6 pricing ($3/1M tokens, ₹84/$). Actual cost depends on which model you use in Claude Desktop.
+
+
 
 ---
 
 ## 🐛 Troubleshooting
 
-### Dashboard shows "Wick not running"
-- Start Claude Desktop
-- Ensure Wick MCP is registered in Claude config
+**TOM already running error**
+./stop.sh
+./start.sh
 
-### "Could not find npx" error
-- Install Node.js: https://nodejs.org/
-- Ensure `npx` is in PATH
+**Port 7737 in use**
+```bash
+lsof -i :7737
+kill <PID>
+```
 
-### Cache not working
-- Verify ChromaDB exists: `ls storage/chroma_db/`
-- Check GROQ_API_KEY is set
-- Review logs: `tail -f server.log`
+**Claude not using token:execute**
+- Check Settings → Developer → MCP Servers — `token` should show green
+- Add explicit instruction at start of conversation (see above)
 
-### Tool selection returning wrong tools
-- Check server.log for warnings
-- Verify tool schemas are loading
-- Re-run setup: `bash start.sh`
+**Tool not found for query**
+- Rephrase more specifically — e.g. "list files in /Users/name/Desktop" instead of "show my stuff"
+- Check `server_out.log` for similarity scores
+
+**Dashboard offline**
+```bash
+cat server_out.log | tail -50
+```
+
+---
+
+## ⚠️ Known Limitations
+
+- **Claude's built-in tools take priority** — memory and web search bypass TOM because Claude prefers its native tools
+- **Cost estimates are approximate** — based on Sonnet 4.6 pricing; varies by model
+- **Windows not supported** — Mac and Linux only
+- **Tilde paths** — if a tool call fails with "file not found", use the full path e.g. `/Users/name/Desktop/file.pdf`
 
 ---
 
-## 📖 Documentation
+## 📖 Docs
 
-- `/docs/SETUP.md` — Detailed installation for your tech lead
-- `/docs/QUICKSTART.md` — 5-minute quick start
-- `/docs/COMPONENTS.md` — Deep dive into each component
-
----
+- `docs/SETUP.md` — Detailed setup guide
+- `docs/QUICKSTART.md` — 5-minute quick start

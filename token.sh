@@ -1,4 +1,54 @@
 #!/bin/bash
+
+# stop 
+COMMAND=${1:-start}
+
+if [[ "$COMMAND" == "stop" ]]; then
+    PID_FILE="$(cd "$(dirname "$0")" && pwd)/storage/server.pid"
+    if [ ! -f "$PID_FILE" ]; then
+        echo "Token-optimeee is not running."
+        exit 0
+    fi
+    PID=$(cat "$PID_FILE")
+    if kill -0 "$PID" 2>/dev/null; then
+        kill "$PID"
+        rm "$PID_FILE"
+        pkill -f "streamlit" 2>/dev/null || true
+        echo "Token-optimeee stopped."
+    else
+        echo "Token-optimeee was not running."
+        rm "$PID_FILE"
+    fi
+    exit 0
+fi
+
+if [[ "$COMMAND" == "status" ]]; then
+    PID_FILE="$(cd "$(dirname "$0")" && pwd)/storage/server.pid"
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "Token-optimeee is running (pid $(cat $PID_FILE))"
+        echo "   Dashboard : http://localhost:7738"
+        echo "   API       : http://localhost:7737"
+    else
+        echo "Token-optimeee is not running."
+    fi
+    exit 0
+fi
+
+if [[ "$COMMAND" == "restart" ]]; then
+    "$0" stop
+    sleep 2
+    exec "$0" start
+fi
+
+
+
+# default: start
+
+if [[ "$OSTYPE" == "msys"* || "$OSTYPE" == "win32"* || "$OSTYPE" == "cygwin"* ]]; then
+    echo "ERROR: Windows is not yet supported. Use Mac or Linux."
+    exit 1
+fi
+
 set -e
 
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -107,25 +157,42 @@ else
     CLAUDE_CONFIG="$HOME/.config/Claude/claude_desktop_config.json"
 fi
 
-# Warn user to quit Claude Desktop 
-echo ""
-echo "IMPORTANT: Claude Desktop must be fully quit before continuing."
-echo "   On Mac: press Cmd+Q on Claude Desktop"
-echo ""
-read -p "   Have you quit Claude Desktop? (y/n): " QUIT_CONFIRM
-if [[ "$QUIT_CONFIRM" != "y" && "$QUIT_CONFIRM" != "Y" ]]; then
-    echo "   Please quit Claude Desktop first, then run start.sh again."
-    exit 1
+
+# already running? 
+mkdir -p "$PROJECT_ROOT/storage"
+PID_FILE="$PROJECT_ROOT/storage/server.pid"
+
+if [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE")
+    if kill -0 "$PID" 2>/dev/null; then
+        echo ""
+        echo "Token-optimeeee is already running!"
+        echo "   Dashboard : http://localhost:7738"
+        echo "   To restart: double-click stop.sh first, then start.sh"
+        exit 0
+    else
+        rm "$PID_FILE"
+    fi
 fi
 
 # Kill any leftover server processes
-pkill -f "src/mcp/server.py" 2>/dev/null || true
 pkill -f "server_http.py" 2>/dev/null || true
 pkill -f "streamlit" 2>/dev/null || true
 sleep 1
-echo "Old processes cleared"
+echo "Ready to start"
 
-# Write Claude config 
+
+# Close Claude Desktop before touching config
+echo "Closing Claude Desktop..."
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    osascript -e 'quit app "Claude"' 2>/dev/null || true
+elif [[ "$OSTYPE" == "linux"* ]]; then
+    pkill -f "claude" 2>/dev/null || true
+fi
+sleep 2
+
+
+# Write Claude config
 node_bin=$(dirname "$NPX_PATH")
 clean_path="$node_bin:/usr/local/bin:/usr/bin:/bin"
 
@@ -148,7 +215,6 @@ else:
 
 config.setdefault("mcpServers", {})
 
-# Ensure filesystem + memory exist as base downstream servers
 if "filesystem" not in config["mcpServers"]:
     config["mcpServers"]["filesystem"] = {
         "command": npx_path,
@@ -163,16 +229,13 @@ if "memory" not in config["mcpServers"]:
     }
     print("  Added memory MCP")
 
-# Remove stale backup if exists
 backup_path = config_path.replace(".json", "") + ".token_optim_backup.json"
 if os.path.exists(backup_path):
     os.remove(backup_path)
-    print("  Removed stale backup")
 
-# Register token + wick
 config["mcpServers"]["token"] = {
     "command": npx_path,
-    "args": ["mcp-remote", "http://127.0.0.1:8000/mcp/"]
+    "args": ["mcp-remote", "http://127.0.0.1:7737/mcp/"]
 }
 
 config["mcpServers"]["wick"] = {
@@ -197,25 +260,54 @@ with open(config_path, "w") as f:
 print("Claude config updated")
 EOF
 
-# Launch dashboard 
+#  check port free ─
+if lsof -i :7737 -t &>/dev/null; then
+    echo ""
+    echo "ERROR: Port 7737 is already in use."
+    echo "      Token-optimeeee might already be running — double-click stop.sh to stop it first."
+    exit 1
+fi
+
+#  launch server in background ─
 echo ""
 echo "---------------------------------------------------------"
-echo "   Starting TOM Dashboard..."
-echo "---------------------------------------------------------"
-echo ""
-echo "   Dashboard : http://localhost:8501"
-echo "   API       : http://localhost:8000"
-echo ""
-echo "   Now open Claude Desktop."
-echo "   You should see 'token' in Settings → Developer."
-echo ""
-echo "   Press Ctrl+C to stop."
+echo "   Starting Token-optimeeee..."
 echo "---------------------------------------------------------"
 echo ""
 
-$PYTHON "$PROJECT_ROOT/src/mcp/server_http.py" &
+nohup $PYTHON "$PROJECT_ROOT/src/mcp/server_http.py" \
+    > "$PROJECT_ROOT/server_out.log" 2>&1 &
 HTTP_PID=$!
+echo $HTTP_PID > "$PID_FILE"
 
-trap "kill $HTTP_PID 2>/dev/null; echo 'Dashboard stopped.'" SIGINT SIGTERM
+echo "   Token-optimeeee started! (running in background)"
+echo ""
+echo "   Dashboard : http://localhost:7738"
+echo "   API       : http://localhost:7737"
+echo ""
+echo "   Open Claude Desktop now — you should see 'token' in"
+echo "   Settings → Developer → MCP Servers"
+echo ""
+echo "   To STOP Token-optimeeee: double-click stop.sh"
+echo "---------------------------------------------------------"
+echo ""
+echo "   You can close this terminal — Token-optimeeee keeps running."
+echo ""
 
-wait $HTTP_PID
+# Reopen Claude Desktop
+sleep 6
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    open "http://localhost:7738"
+    open -a "Claude" 2>/dev/null || echo "   (Open Claude Desktop manually)"
+elif [[ "$OSTYPE" == "linux"* ]]; then
+    nohup claude 2>/dev/null & true || echo "   (Open Claude Desktop manually)"
+fi
+# $PYTHON "$PROJECT_ROOT/src/mcp/server_http.py" &
+# HTTP_PID=$!
+
+# trap "kill $HTTP_PID 2>/dev/null; echo 'Dashboard stopped.'" SIGINT SIGTERM
+
+# wait $HTTP_PID
+# # if server crashes 
+# echo ""
+# echo "Server stopped. Run start.sh again to restart."

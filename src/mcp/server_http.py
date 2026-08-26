@@ -7,14 +7,21 @@ sys.path.insert(0, project_root)
 from fastapi import FastAPI
 from fastmcp.utilities.lifespan import combine_lifespans
 import logging, contextlib
-from src.core.db import get_connection, init_db, get_summary, get_recent_events, get_tool_stats, get_token_analysis,get_conversation_stats
+import src.core.db as db
 from src.core.document_search import list_index_doc
 from src.mcp.server import _persistent_sessions
 from src.mcp.server import app as mcp_app
+from config import settings
 
-_dash_conn = get_connection()
-init_db(_dash_conn)
 _start_time = time.time()
+
+# Initialise DB schema once
+def _init_db_once():
+    conn = db.get_connection()
+    db.init_db(conn)
+    conn.close()
+
+_init_db_once()
 
 @contextlib.asynccontextmanager
 async def _dashboard_lifespan(app: FastAPI):
@@ -43,13 +50,22 @@ async def health():
     except Exception:
         pass
 
-    sessions_active = len(_persistent_sessions) if '_persistent_sessions' in dir() else 0
+    sessions_active = len(_persistent_sessions)
+
+    total_events = 0
+    try:
+        conn = db.get_connection()
+        total_events = db.get_event_count(conn)
+        conn.close()
+    except Exception:
+        pass
 
     return {
         "status": "ok",
         "uptime": f"{hours}h {minutes}m {seconds}s",
         "tools_indexed": tools_indexed,
         "sessions_active": sessions_active,
+        "total_events_logged": total_events,
         "groq": "ok" if os.getenv("GROQ_API_KEY") else "missing"
     }
     
@@ -57,42 +73,73 @@ async def health():
 
 @api.get("/metrics/summary")
 async def metrics_summary():
-    row = get_summary(_dash_conn)
-    return {
-        "total_calls": row["total_calls"],
-        "cache_hits": row["cache_hits"],
-        "hit_rate_pct": row["hit_rate_pct"],
-        "total_trim_saved": row["total_trim_saved"],
-        "total_schema_saved": row["total_schema_saved"],
-        "total_tokens_saved": row["total_tokens_saved"]
-    }
+    conn = db.get_connection()
+    try:
+        row = db.get_summary(conn)
+        return {
+            "total_calls": row["total_calls"],
+            "cache_hits": row["cache_hits"],
+            "hit_rate_pct": row["hit_rate_pct"],
+            "total_trim_saved": row["total_trim_saved"],
+            "total_schema_saved": row["total_schema_saved"],
+            "total_tokens_saved": row["total_tokens_saved"]
+        }
+    finally:
+        conn.close()
 
 @api.get("/metrics/tools")
 async def metrics_tools():
-    rows = get_tool_stats(_dash_conn)
-    return [dict(r) for r in rows]
+    conn = db.get_connection()
+    try:
+        rows =db.get_tool_stats(conn)
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 @api.get("/metrics/events")
 async def metrics_events(limit: int = 50):
-    rows = get_recent_events(_dash_conn, limit)
-    return [dict(r) for r in rows]
+    conn = db.get_connection()
+    try:
+        rows = db.get_recent_events(conn, limit)
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 @api.get("/metrics/indexed_docs")
 async def metrics_indexed_docs():
     docs = list_index_doc()
     return [{"doc_id": k, "source": v} for k, v in docs.items()]
 
-
 @api.get("/metrics/token_analysis")
 async def token_analysis():
-    return get_token_analysis(_dash_conn)
+    conn =db.get_connection()
+    try:
+        return db.get_token_analysis(conn)
+    finally:
+        conn.close()
+        
+@api.get("/metrics/groq_usage")
+async def groq_usage():
+    conn=db.get_connection()
+    try:
+        return db.get_groq_usage(conn)
+    finally:
+        conn.close()
 
 @api.get("/metrics/conversations")
 def conversations():
-    conn = get_connection()
-    rows = get_conversation_stats(conn, limit=20)
-    return [dict(r) for r in rows]
+    conn = db.get_connection()
+    try:
+        rows = db.get_conversation_stats(conn, limit=20)
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
+
+@api.get("/shutdown")
+async def shutdown():
+    os.kill(os.getpid(),signal.SIGTERM)
+    return {"status":"shutting down"}
 
 
 if __name__ == "__main__":    
@@ -100,7 +147,7 @@ if __name__ == "__main__":
 
     streamlit_proc = subprocess.Popen(
         [sys.executable, "-m", "streamlit", "run", front_path,
-         "--server.port", "8501", "--server.headless", "true"],
+        "--server.port", str(settings.dashboard_port), "--server.headless", "true"],
         cwd=project_root
     )
     logger.info(f"[LAUNCHER] Streamlit started (pid {streamlit_proc.pid}) | http://localhost:8501")
@@ -119,5 +166,6 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, _forward_signal)
     signal.signal(signal.SIGINT, _forward_signal)
 
-    logger.info("[LAUNCHER] FastAPI started - http://localhost:8000")
-    uvicorn.run(api, host="0.0.0.0", port=8000)
+    logger.info(f"[LAUNCHER] FastAPI started - http://localhost:{settings.api_port}")
+    uvicorn.run(api, host="0.0.0.0", port= settings.api_port)
+    

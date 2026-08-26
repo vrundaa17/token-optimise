@@ -1,11 +1,12 @@
 import tiktoken
+from config import settings
 
 _encoder = tiktoken.get_encoding("cl100k_base")
 
 def count_tokens(text):
     return len(_encoder.encode(str(text)))
 
-MAX_RESPONSE_TOKENS = 500
+MAX_RESPONSE_TOKENS = settings.max_response_tokens
 import json
 
 def _is_json(text: str) -> bool:
@@ -18,11 +19,20 @@ def trim_text_response(text: str, max_tokens: int = MAX_RESPONSE_TOKENS) -> tupl
     if original_tokens <= max_tokens:
         return text, original_tokens, original_tokens
     
-    # JSON response — don't cut, just warn
+
+    # JSON response — truncate keys/values rather than raw cut
     if _is_json(text):
-        note = f"\n\n[JSON response: {original_tokens} tokens — not trimmed to preserve structure]"
-        result = text + note
-        return result, original_tokens, original_tokens
+        try:
+            parsed = json.loads(text)
+            # if it's a list, just take first N items
+            if isinstance(parsed, list) and len(parsed) > 10:
+                parsed = parsed[:10]
+                trimmed = json.dumps(parsed) + "\n\n[Trimmed: showing 10 of original items]"
+                return trimmed, original_tokens, count_tokens(trimmed)
+        except Exception:
+            pass
+        # fallback — return as-is, still record actual token count
+        return text, original_tokens, original_tokens
     
     # plain text — cut at sentence boundary
     char_limit = max_tokens * 4

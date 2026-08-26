@@ -53,8 +53,8 @@ def index_tools(tools):
     logger.info(f"[TOOLS] indexed {len(tools)} tools dynamically")
 
 
-TOOL_CONFIDENCE_THRESHOLD = 0.45
-REMOTE_TOOL_CONFIDENCE_THRESHOLD = 0.35
+TOOL_CONFIDENCE_THRESHOLD = settings.tool_confidence_threshold
+REMOTE_TOOL_CONFIDENCE_THRESHOLD = settings.remote_tool_confidence_threshold
 
 def select_relevant_tools(tools: list[dict], query: str, top_k: int = 2, remote_tool_names: set = None) -> list[dict]:
     global _tools_indexed

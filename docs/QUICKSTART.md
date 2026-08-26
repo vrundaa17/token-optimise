@@ -1,24 +1,24 @@
 # Quick Start — 5 Minute Setup
 
-Get Token-Optimised MCP running in 5 minutes.
+Get Token-optimeee running in 5 minutes.
 
 ## TL;DR
 
 ```bash
-# 1. Install
-pip install -r requirements.txt
+# 1. Run setup
+chmod +x token.sh
+./token.sh start
 
-# 2. Configure
-echo "GROQ_API_KEY=your_key_here" > .env
+# 2. Add your Groq API key when prompted
+# Get one free at: https://console.groq.com/
 
-# 3. Run
-bash start.sh
+# 3. Dashboard opens automatically in your browser
 
-# 4. Open Claude Desktop and ask:
-"Use find_tool to list my files"
+# 4. Open Claude Desktop and say:
+"Use token:execute for every task. List 3 files from my desktop"
 
 # 5. Watch metrics at:
-http://localhost:8501
+http://localhost:7738
 ```
 
 ---
@@ -27,78 +27,75 @@ http://localhost:8501
 
 | Component | What It Does | Access |
 |---|---|---|
-| **find_tool** | Smart file/memory operations | Claude Desktop |
-| **Semantic Cache** | Avoids redundant tool calls | Dashboard |
-| **Tool Selection** | Picks right tool automatically | Dashboard (metrics) |
-| **Response Trimmer** | Caps responses at 500 tokens | Dashboard (metrics) |
-| **Token Audit** | Tracks every prompt/response | Dashboard (events) |
-| **Dashboard** | Real-time metrics UI | http://localhost:8501 |
+| **token:execute** | Routes all tasks through TOM | Claude Desktop |
+| **Semantic Cache** | Returns cached answers for similar queries | Dashboard |
+| **Tool Selection** | Picks the right tool from 23+ options | Dashboard |
+| **Response Trimmer** | Caps verbose responses to ≤200 tokens | Dashboard |
+| **PDF RAG** | Index and search PDFs semantically | Claude Desktop |
+| **Dashboard** | Real-time metrics and savings | http://localhost:7738 |
 
 ---
 
-## First Test (2 min)
-
-### Test: Cache Hit
+## First Test — Cache Hit (2 min)
 
 1. Open Claude Desktop
-2. Ask: **"List 3 files from my Deesktop"**
-3. Wait for response ✓
-4. Immediately ask: **"List the files on my Desktop"**
-5. Check dashboard → Recent Events
-6. Look for **"✅ HIT"** on second query
+2. Say: **"Use token:execute for everything. List 3 files from my desktop"**
+3. Wait for response
+4. Ask the same thing again: **"List 3 files from my desktop"**
+5. Open dashboard → Recent Events
+6. Second query should show **✅ HIT**
 
 **What you'll see:**
-- First query: ❌ MISS (new query, calls tool)
-- Second query: ✅ HIT (cached answer, zero tool calls)
-- Token savings shown in dashboard
+- First query: ❌ MISS — calls the tool, gets result, stores in cache
+- Second query: ✅ HIT — returns instantly, zero tool calls, zero tokens wasted
 
 ---
 
-## Second Test (3 min)
+## Second Test — Schema Token Reduction (3 min)
 
-### Test: Schema Token Reduction
-
-1. Open dashboard: `http://localhost:8501`
-2. Look for **"Token Analysis"** section
+1. Open dashboard: `http://localhost:7738`
+2. Look at **Token Analysis** section
 3. Compare:
-   - **Schema Tokens Without :** ~2,100
-   - **Schema Tokens With :** ~75
-   - **Total Saved:** ~2,025 tokens
+   - **Schema Tokens Without TOM:** ~19,000+
+   - **Schema Tokens With TOM:** ~400
+   - **Reduction:** ~91%
 
 **What this means:**
-- Without optimization: Claude sees all 23 tool schemas
-- With optimization: Claude sees only the 1 relevant tool
-- Per query: You save ~2,000 tokens of boilerplate
+- Without TOM: Claude receives every tool schema on every call
+- With TOM: Claude receives only the one relevant tool schema
+- Real measured result: **91.8% schema token reduction**
 
 ---
 
-## Common Commands
+## PDF Test (3 min)
+
+1. Tell Claude: **"index the file at /full/path/to/file.pdf with doc_id mydoc"**
+2. Ask: **"what is mydoc about"**
+3. Ask the same question again
+4. Dashboard shows cache hit + tokens saved
+
+---
+
+## Commands
 
 | Command | What It Does |
 |---|---|
-| `bash start.sh` | Start everything |
-| `curl http://localhost:8000/health` | Check if API is alive |
-| `tail -f server.log` | Watch live logs |
-| `http://localhost:8501` | Open dashboard |
-| `Ctrl+C` | Stop everything |
+| `./token.sh start` | Start TOM |
+| `./token.sh stop` | Stop TOM |
+| `./token.sh restart` | Restart TOM |
+| `./token.sh status` | Check if running |
+| `curl http://localhost:7737/health` | Check API health |
+| `tail -f server_out.log` | Watch live logs |
 
 ---
 
-## What Happens Next
+## For Best Results
 
-### Automatic
+Add this at the start of every Claude Desktop conversation:
 
-- Every tool call is logged to SQLite
-- Every response is cached in ChromaDB
-- Metrics auto-refresh every 60 seconds
-- Cache hits automatically reduce tokens
+> Use token:execute for every task. Never call other tools directly.
 
-### Manual
-
-- Adjust cache TTLs in `core/cache.py`
-- Configure allowed directories in `start.sh`
-- Add more downstream MCP servers
-- Index PDFs with `index_document` tool
+Claude has its own built-in tools and may prefer them. This instruction ensures it routes through TOM consistently. See README for full explanation.
 
 ---
 
@@ -106,22 +103,22 @@ http://localhost:8501
 
 | Metric | Meaning |
 |---|---|
-| **Cache Hits** | # of queries that skipped tool calls |
-| **Cache Hit Rate** | % of queries that hit cache |
-| **Schema Tokens Saved** | Tokens saved by only showing relevant tools |
+| **Schema Tokens Without TOM** | Tokens Claude would get with all schemas |
+| **Schema Tokens With TOM** | Tokens Claude actually got (1 schema) |
+| **Cache Hit Rate** | % of queries returned from cache |
 | **Trim Tokens Saved** | Tokens saved by capping responses |
-| **Total Saved** | Sum of schema + trim savings |
+| **Real Groq Token Usage** | Exact token counts from Groq API |
+| **Cost Saved** | Estimated savings (Sonnet 4.6 pricing) |
 
 ---
 
-## Performance Expectations
+## Performance from Real Testing
 
-| Metric | Expected |
+| Metric | Result |
 |---|---|
-| First query time | 2-5 sec (normal) |
-| Cached query time | <1 sec (instant) |
-| Tokens per query | 1,800-2,500 (baseline) |
-| Tokens saved per query | 300-2,000 (varies) |
-| Cache hit rate | 30-50% (after warmup) |
+| Schema token reduction | 91.8% |
+| Cache hit rate | 35.7% |
+| Cached query time | <1 sec |
+| First query time | 2-5 sec |
 
 ---

@@ -6,10 +6,12 @@ import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 import json,os
 
+from config import settings as _cfg
+
 
 st_autorefresh(interval=60000, key="dashboard_refresh")
 
-API_BASE = "http://localhost:8000"
+API_BASE = os.getenv("API_BASE", f"http://localhost:{_cfg.api_port}")
 
 st.set_page_config(
     page_title="Token-optimeee",
@@ -58,8 +60,10 @@ def fetch(endpoint):
         r = requests.get(f"{API_BASE}{endpoint}", timeout=5)
         r.raise_for_status()
         return r.json()
+    except requests.exceptions.ConnectionError:
+        return None                  # server not yet up — shown via health check banner
     except Exception as e:
-        st.error(f"Failed to fetch {endpoint}: {e}")
+        st.warning(f"Could not load {endpoint}: {e}")
         return None
 
 def fetch_wick():
@@ -75,50 +79,63 @@ def fetch_wick():
 st.title("🦾 Token-optimeee")
 st.caption("Real-time analytics dashboard — auto refreshes every 60s")
 
+
 health = fetch("/health")
 if health:
     st.success("● Live")
+    if st.button("⏹ Stop Token-optimeeee"):
+        try:
+            requests.post(f"{API_BASE}/shutdown", timeout=2)
+            st.warning("Token-optimeeee is shutting down...")
+        except:
+            st.warning("Stopping...")
 else:
     st.error("● Offline")
-
+    
+    
 st.divider()
 
 # ── wick live session ─────────────────────────────────────────────────────────
 wick = fetch_wick()
 if wick:
-    st.subheader("🔥 Live Claude Session (via Wick)")
-    w1, w2, w3, w4, w5 = st.columns(5)
-    w1.metric("Total Tokens Used", f"{wick.get('totalTokens', 0):,}")
-    w2.metric("Cost (₹)", f"₹{wick.get('totalCostINR', 0):.2f}")
-    w3.metric("Cost ($)", f"${wick.get('totalCostUSD', 0):.4f}")
-    w4.metric("Sessions", wick.get('sessionCount', 0))
-    w5.metric("Total Turns", wick.get('totalTurns', 0))
-    
-    st.divider()
-    st.subheader("🎬 This Test Session")
-    if st.button("Start Test Session"):
+    # auto-save baseline on first load if not already saved
+    if not os.path.exists("storage/wick_baseline.json"):
         save_wick_baseline(wick)
-        st.success("Baseline saved! Run your test cases now.")
 
     delta = get_wick_delta(wick)
-    if delta:
-        d1, d2, d3,d4 = st.columns(4)
-        d1.metric("Tokens This Session", f"{delta['tokens']:,}")
-        d2.metric("Cost This Session (₹)", f"₹{delta['cost_inr']:.2f}")
-        d3.metric("Cost This Session ($)", f"${delta['cost_usd']:.4f}")
-        d4.metric("Turns This Session", delta['turns'])
-    else:
-        st.info("Click 'Start Test Session' to begin tracking.")
+
+    st.subheader("🔥 Live Session")
+    w1, w2, w3, w4 = st.columns(4)
+    
+    tokens_delta = delta['tokens'] if delta else 0
+    cost_inr_delta = delta['cost_inr'] if delta else 0.0
+    cost_usd_delta = delta['cost_usd'] if delta else 0.0
+    turns_delta = delta['turns'] if delta else 0
+
+    w1.metric("Tokens Used", f"{wick.get('totalTokens', 0):,}", 
+              delta=f"+{tokens_delta:,} this session" if tokens_delta else None)
+    w2.metric("Cost (₹)", f"₹{wick.get('totalCostINR', 0):.2f}",
+              delta=f"+₹{cost_inr_delta:.2f} this session" if cost_inr_delta else None)
+    w3.metric("Cost ($)", f"${wick.get('totalCostUSD', 0):.4f}",
+              delta=f"+${cost_usd_delta:.4f} this session" if cost_usd_delta else None)
+    w4.metric("Turns", wick.get('totalTurns', 0),
+              delta=f"+{turns_delta} this session" if turns_delta else None)
+
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("🔄 Reset Session"):
+            save_wick_baseline(wick)
+            st.success("Session reset!")
 else:
-    st.info("Wick not running — start Claude Desktop to see live token data.")
-
+    st.info("Wick not running — open Claude Desktop to see live token data.")
+    
 st.divider()
-
+    
 # ── token analysis ────────────────────────────────────────────────────────────
 analysis = fetch("/metrics/token_analysis")
 if analysis:
     st.subheader("📊 Token Analysis — Impact")
-    st.caption("All numbers are real measurements  — no estimates or baselines")
+    st.caption("Token counts measured with tiktoken. Cost estimates based on Claude Sonnet 4.6 pricing and Rs.84 as dollar price in India  — actual cost may vary depending on your model.")
 
     a1, a2, a3, a4 = st.columns(4)
     a1.metric("Schema Tokens Without ", f"{analysis['schema_tokens_without_tom']:,}")
@@ -131,6 +148,17 @@ if analysis:
     b2.metric("Response Tokens After Trim", f"{analysis['tokens_after_trim']:,}")
     b3.metric("Cost Saved (₹)", f"₹{analysis['cost_saved_inr']:.4f}")
     b4.metric("Cost Saved ($)", f"${analysis['cost_saved_usd']:.6f}")
+
+    # real groq token usage
+    groq_data = fetch("/metrics/groq_usage")
+    if groq_data:
+        st.divider()
+        st.subheader("🤖 Real Groq Token Usage (Exact API Counts)")
+        st.caption("These are actual token counts returned by Groq API — not estimates")
+        g1, g2, g3 = st.columns(3)
+        g1.metric("Total Prompt Tokens", f"{groq_data['total_prompt_tokens']:,}")
+        g2.metric("Total Completion Tokens", f"{groq_data['total_completion_tokens']:,}")
+        g3.metric("Total Groq Tokens", f"{groq_data['total_groq_tokens']:,}")
 
     # savings breakdown bar
     savings_data = {
@@ -152,7 +180,7 @@ if analysis:
         showlegend=False,
         margin=dict(t=10, b=10)
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 st.divider()
 
@@ -188,7 +216,7 @@ if summary:
             height=300,
             margin=dict(t=20, b=20)
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 st.divider()
 
@@ -212,7 +240,7 @@ if tool_stats and len(tool_stats) > 0:
         height=300,
         margin=dict(t=20, b=20)
     )
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width='stretch')
 
 st.divider()
 
@@ -222,7 +250,7 @@ if docs is not None:
     st.subheader(f"Indexed Documents ({len(docs)})")
     if docs:
         df_docs = pd.DataFrame(docs)
-        st.dataframe(df_docs, use_container_width=True, hide_index=True)
+        st.dataframe(df_docs, width='stretch', hide_index=True)
     else:
         st.info("No documents indexed yet.")
 
@@ -239,7 +267,7 @@ if conv_data:
             df_conv[col] = df_conv[col].fillna(0).astype(int)
     st.dataframe(
         df_conv[["conversation_id", "started_at", "total_calls", "cache_hits", "trim_saved", "schema_saved", "total_saved"]],
-        use_container_width=True,
+        width='stretch',
         hide_index=True
     )
     if len(df_conv) > 1:
@@ -259,7 +287,7 @@ if conv_data:
             showlegend=False,
             margin=dict(t=10, b=10)
         )
-        st.plotly_chart(fig_conv, use_container_width=True)
+        st.plotly_chart(fig_conv, width='stretch')
         
         
 st.divider()       
@@ -281,6 +309,6 @@ if events and len(events) > 0:
     display_cols = ["timestamp", "tool_name", "query", "cache_hit",
                     "trim_saved", "schema_tokens_saved", "success"]
     display_cols = [c for c in display_cols if c in df.columns]
-    st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
+    st.dataframe(df[display_cols], width='stretch', hide_index=True)
 else:
     st.info("No events yet. Start using Token-optimeee to see data here.")

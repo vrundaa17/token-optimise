@@ -34,12 +34,15 @@ def check_cache(query: str, tool_name: str = ""):
             meta = results["metadatas"][0][0]
             cached_at = meta.get("cached_at", 0)
             ttl = TTL_BY_TOOL.get(tool_name, TTL_DEFAULT)
-            if time.time() - cached_at > ttl:
+            age = time.time() - cached_at
+            if age > ttl:
+                logger.info(f"[CACHE] EXPIRED for '{tool_name}' | age={int(age)}s ttl={ttl}s sim={similarity:.3f}")
                 return None, similarity
+            logger.info(f"[CACHE] HIT for '{tool_name}' | sim={similarity:.3f} age={int(age)}s")
             return meta['answer'], similarity
         return None, similarity
     except Exception as e:
-        logger.warning(f"[CACHE] check failed: {e}")
+        logger.warning(f"[CACHE] check failed: {e}", exc_info=True)
         return None, 0.0
 
 def store_answer(query, answer):

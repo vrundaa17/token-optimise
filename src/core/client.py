@@ -25,26 +25,34 @@ def fill_args_llm(query,schema):
 
         Rules:
         - Return ONLY a JSON object, no explanation, no markdown, no backticks
-        - Fill all required fields
-        - Use null for optional fields you cannot determine
-        - Keep values concise
-        - For file paths: always use full absolute paths. Desktop = /Users/<username>/Desktop/ on Mac, /home/<username>/Desktop/ on Linux
-        - The current user's home directory is: {os.path.expanduser('~')}
-
+        - For file paths: NEVER use ~ or relative paths. Always expand to full absolute path.
+        - Home directory is: {os.path.expanduser('~')}
+        - Desktop is: {os.path.expanduser('~/Desktop')}
+        - Documents is: {os.path.expanduser('~/Documents')}
+        - If user says "Desktop", use: {os.path.expanduser('~/Desktop')}
+        - If user says "home", use: {os.path.expanduser('~')}
+        - Example: "file on Desktop" → "{os.path.expanduser('~/Desktop')}/filename.pdf"
         JSON:
     """
         
     
     try:
-        response = _groq_client.chat.completions.create(
+        raw = _groq_client.chat.completions.create(
             model="openai/gpt-oss-20b",
             messages = [{"role":"user","content":prompt}],
             temperature=0,
-            max_tokens=300,
+            max_tokens=settings.max_response_tokens,
         ) 
-        response = response.choices[0].message.content.strip()
+        usage = raw.usage
+        logger.info(f"[GROQ] fill_args | prompt_tokens={usage.prompt_tokens} completion_tokens={usage.completion_tokens}")
+        response = raw.choices[0].message.content.strip()
         args = json.loads(response)
-        return {k: v for k, v in args.items() if v is not None}
+        result = {k: v for k, v in args.items() if v is not None}
+        result["_groq_usage"] = {
+            "prompt_tokens": usage.prompt_tokens,
+            "completion_tokens": usage.completion_tokens
+        }
+        return result
     
     except json.JSONDecodeError as e:
         logger.warning(f"[GROQ] failed to parse args JSON: {e} — trying schema defaults")
@@ -93,6 +101,8 @@ def expand_query(query: str, tool_descriptions: list[dict]) -> str:
             max_tokens=60,
             temperature=0.0
         )
+        usage = resp.usage
+        logger.info(f"[GROQ] expand_query | prompt_tokens={usage.prompt_tokens} completion_tokens={usage.completion_tokens}")
         rewritten = resp.choices[0].message.content.strip()
         return rewritten if rewritten else query
     except Exception as e:

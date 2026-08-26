@@ -47,7 +47,7 @@ def index_doc(file_path, doc_id):
     from langchain_community.document_loaders import PyMuPDFLoader
     from langchain_core.documents import Document
     
-    
+    file_path = os.path.expanduser(file_path)
     if not file_path or not file_path.strip():
         raise ValueError("file_path cannot be empty")
     if not os.path.exists(file_path):

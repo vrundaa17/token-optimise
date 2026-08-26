@@ -6,8 +6,7 @@ from config import PROJECT_ROOT
 logger = logging.getLogger("token")
 
 DB_PATH = os.path.join(PROJECT_ROOT, "storage", "token_events.db")
-import time
-import uuid
+import time,uuid
 
 CONVERSATION_TIMEOUT_MINUTES = 15
 _current_conversation_id = None
@@ -57,12 +56,16 @@ def init_db(conn):
             schema_tokens_full   INTEGER DEFAULT 0,
             schema_tokens_selected  INTEGER DEFAULT 0,
             schema_tokens_saved  INTEGER DEFAULT 0,
+            groq_prompt_tokens   INTEGER DEFAULT 0,
+            groq_completion_tokens INTEGER DEFAULT 0,
             doc_id   TEXT,
             success  INTEGER DEFAULT 1
         )
     """)
     try:
         conn.execute("ALTER TABLE events ADD COLUMN conversation_id TEXT")
+        conn.execute("ALTER TABLE events ADD COLUMN groq_prompt_tokens INTEGER DEFAULT 0")
+        conn.execute("ALTER TABLE events ADD COLUMN groq_completion_tokens INTEGER DEFAULT 0")
         conn.commit()
     except Exception:
         pass
@@ -79,7 +82,8 @@ def insert_event(**kwargs):
         "tool_name", "query", "cache_hit", "cache_similarity",
         "tokens_before_trim", "tokens_after_trim", "trim_saved",
         "schema_tokens_full", "schema_tokens_selected", "schema_tokens_saved",
-        "doc_id", "success"
+        "doc_id", "success",
+        "groq_prompt_tokens", "groq_completion_tokens"
     ]
     data = {f: kwargs.get(f, None) for f in fields}
     placeholders = ", ".join(["?" for _ in fields])
@@ -183,6 +187,11 @@ def get_token_analysis(conn):
         "cost_saved_inr": round(total_saved * inr_per_token, 4)
     }
     
+def get_event_count(conn) -> int:
+    """Quick row count for health check."""
+    row = conn.execute("SELECT COUNT(*) FROM events").fetchone()
+    return row[0] if row else 0
+
 def get_conversation_stats(conn, limit=20):
     return conn.execute("""
         SELECT
@@ -199,3 +208,14 @@ def get_conversation_stats(conn, limit=20):
         ORDER BY started_at DESC
         LIMIT ?
     """, (limit,)).fetchall()
+    
+    
+def get_groq_usage(conn):
+    row = conn.execute("""
+            SELECT
+                COALESCE(SUM(groq_prompt_tokens), 0) as total_prompt_tokens,
+                COALESCE(SUM(groq_completion_tokens), 0) as total_completion_tokens,
+                COALESCE(SUM(groq_prompt_tokens + groq_completion_tokens), 0) as total_groq_tokens
+            FROM events
+        """).fetchone()
+    return dict(row)
