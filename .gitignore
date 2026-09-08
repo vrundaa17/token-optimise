@@ -10,6 +10,7 @@ server.log
 extenstion/
 *.py[cod]
 .pytest_cache/
+dist/
 
 .vscode/
 .idea/
@@ -19,3 +20,6 @@ adapters/
 .env
 .env.*
 !.env.example
+token.sh
+remote_servers.json
+config.py

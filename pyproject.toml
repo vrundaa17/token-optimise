@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "token-optimise"
+version = "0.2.0"
+description = "Token-optimised MCP proxy server for Claude Desktop"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "chromadb>=1.5.9",
+    "fastapi>=0.140.13",
+    "fastmcp>=3.4.5",
+    "litellm>=1.40.0",
+    "httpx>=0.28.1",
+    "huggingface_hub>=1.28.0",
+    "langchain-chroma>=1.1.0",
+    "langchain-classic>=1.0.8",
+    "langchain-community>=0.4.2",
+    "langchain-core>=1.6.0",
+    "langchain-huggingface>=1.2.2",
+    "langchain-text-splitters>=1.1.2",
+    "mcp>=1.29.0",
+    "numpy>=1.26.0",
+    "pandas>=3.0.5",
+    "plotly>=6.9.0",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.2",
+    "pymupdf>=1.28.0",
+    "pymupdf4llm>=1.28.0",
+    "python-dotenv>=1.2.2",
+    "requests>=2.34.2",
+    "scipy>=1.13.0",
+    "sentence-transformers>=5.6.1",
+    "sse-starlette>=3.4.6",
+    "streamlit>=1.61.1",
+    "streamlit-autorefresh>=1.0.1",
+    "tiktoken>=0.13.0",
+    "uvicorn>=0.51.0",
+]
+
+[project.scripts]
+token-optimise = "token_optimise.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["token_optimise", "src"]
+exclude = [
+    "src/admin_front.py",
+    "src/mcp/dash_api.py",
+    "src/**/__pycache__",
+    "src/**/*.pyc",
+    "**/.DS_Store",
+    "token_optimise/storage/**",
+    "**/*.db",
+    "**/*.sqlite3",
+    "**/chroma_db/**",
+]

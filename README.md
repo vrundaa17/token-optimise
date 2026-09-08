@@ -1,8 +1,6 @@
-# 🦾 Token-optimeee
+# 🦾 Token-Optimise
 
 A middleware MCP server that sits between Claude Desktop and your downstream MCP servers — reducing token consumption through semantic caching, dynamic tool selection, and response trimming.
-
-**LLM Backend:** Groq | **Vector Store:** ChromaDB | **Dashboard:** Streamlit
 
 ---
 
@@ -10,13 +8,14 @@ A middleware MCP server that sits between Claude Desktop and your downstream MCP
 
 Every Claude Desktop session sends the full schema of every connected MCP tool with every prompt. With 23+ tools registered, that's thousands of tokens injected per query — even when only one tool is needed.
 
-Token-optimeee optimises at three levels:
+Token-Optimise optimises at three levels:
 
 1. **Semantic Tool Selection** — Only the most relevant tool schema is sent to Claude per query (ChromaDB similarity search)
 2. **Semantic Caching** — Repeated or similar queries skip tool calls entirely and return cached answers (similarity ≥ 0.8)
-3. **Response Trimming** — Verbose tool responses are trimmed to ≤200 tokens before entering the context window
+3. **Response Trimming** — Verbose tool responses are trimmed before entering the context window
 
 **Real result from testing:** 91.8% schema token reduction per call.
+
 
 ---
 
@@ -25,13 +24,18 @@ Token-optimeee optimises at three levels:
 .
 ├── README.md                       
 ├── config.py                      # Settings & env loading
-├── start.sh                       # One-click setup and launch
-├── stop.sh                        # One-click
 ├── requirements.txt               # Python dependencies
-├── remote_servers.json            # Remote MCP URLs
+├── Dockerfile                     # For EC2 dashboard deployment
+├── pyproject.toml                 # PyPI package definition
 │
+├── token_optimise/
+│ ├── init.py
+│ ├── main.py                      # Entry point (pip install)
+│ └── config.py                    # Settings & env loading
+|
 ├── src/
 │ ├── front.py                     # Streamlit dashboard
+│ ├── admin_front.py               # Admin dashboard
 │ ├── core/
 │ │ ├── cache.py                   # Semantic cache
 │ │ ├── trim.py                    # Response trimmer
@@ -42,8 +46,9 @@ Token-optimeee optimises at three levels:
 │ │
 │ └── mcp/
 │ ├── server.py                    # Main MCP server
-│ └── server_http.py               # FastAPI + metrics
-│
+│ ├── server_http.py               # FastAPI + metrics
+│ └── dash_api.py                  # Lightweight API for EC2 deployment
+|
 └── storage/
 ├── chroma_db/                     # ChromaDB persistent store
 └── token_audit.db                 # SQLite audit logs
@@ -56,7 +61,6 @@ Token-optimeee optimises at three levels:
 
  1. list files on /Users/../Desktop
  2. list files on /Users/../Desktop  
-
  3. index /Users/../Desktop/leave_policy.pdf doc_id leave
  4. what is the leave policy?
  5. what is the leave policy?                   
@@ -103,45 +107,49 @@ Token-optimeee optimises at three levels:
 ```
 
 
+
 ---
 
-## 🚀 Setup — One Command
+
+## 🚀 Install — One Command
 
 ### Prerequisites
 - Python 3.10+
 - Node.js + npx
-- Groq API key (free at [console.groq.com](https://console.groq.com))
+- An API key from any supported provider (or Ollama for local, no key needed)
 - Claude Desktop (latest)
 
-### Run
 
-## Run
-
-```bash
-chmod +x tom.sh
-./token.sh start     # start
-./token.sh stop      # stop
-./token.sh restart   # restart
-./token.sh status    # check if running
-```
-
-That's it. The script will:
-- Check Python and Node are installed
-- Create a virtual environment and install packages (first run: 4-5 mins)
-- Create `.env` from `.env.example` and prompt you to add your Groq key
-- Close Claude Desktop automatically
-- Write the MCP config
-- Start the server in the background (terminal can be closed)
-- Open the dashboard in your browser
-- Reopen Claude Desktop
-
-### Stop
+### New users — two commands
 
 ```bash
-./stop.sh
+pip install token-optimise
+token-optimise
 ```
 
-Or click the **⏹ Stop TOM** button in the dashboard.
+The installer will:
+- Ask which AI provider you want to use
+- Ask for your API key
+- Ask which folder it can access on your machine
+- Write the MCP config into Claude Desktop automatically
+- Start the server in the background
+
+
+### Switch provider later
+
+```bash
+token-optimise --change-provider
+```
+
+Then restart with `token-optimise`.
+
+
+
+## 📊 Dashboard
+
+### Local (your metrics only)
+http://localhost:7738
+
 
 ---
 
@@ -156,33 +164,45 @@ These are intentionally non-default to avoid conflicts with other projects.
 
 ---
 
-## 💬 For Best Results — Tell Claude to Use TOM
+## 💬 For Best Results — Tell Claude to Use Token-Optimise
 
-Claude Desktop has its own built-in tools (memory, web search) that it may prefer by default. For consistent routing through TOM, start each conversation with:
+Claude Desktop has its own built-in tools (memory, web search) that it may prefer by default. For consistent routing through Token-optimise:
 
+
+> Add this to Settings → Instructions for Claude:
+```
+You have access to a token MCP server. Follow these rules strictly:
+For ALL tasks — files, Gmail, Notion, memory, or anything else — always use token:execute first before calling any other tool.
+For PDF questions always call token:list_indexed_documents first then token:ask_document.
+After every response call token:wick_track.
+
+DOCUMENT/PDF TASKS:
+- ALWAYS call list_indexed_docs first, then ask_document immediately.
+- NEVER ask the user for clarification.
+
+AFTER EVERY RESPONSE: Call wick_track.
+```
+
+You can start your conversation with : 
 > Use token:execute for every task. Never call other tools directly.
 
 For PDF tasks specifically:
 > First call token:list_indexed_documents, then token:ask_document.
 
-**Why is this needed?** Claude decides which tool to call — TOM can't force it. The system prompt in the config nudges Claude, but an explicit instruction in the chat is the most reliable way to ensure TOM is used. This is an honest limitation of how Claude Desktop works, not a bug in TOM.
+**Why is this needed?** Claude decides which tool to call — Token-Optimise can't force it. The system prompt in the config nudges Claude, but an explicit instruction in the chat is the most reliable way to ensure Token-Optimise is used. This is an honest limitation of how Claude Desktop works, not a bug in Token-Optimise.
 
 ---
-
-## 📊 Dashboard
-
-Access at `http://localhost:7738`
+# Dashboard Metrics
 
 | Metric | What it means |
-|---|---|
-| **Schema Tokens Without TOM** | Tokens Claude would receive with all tool schemas |
-| **Schema Tokens With TOM** | Tokens Claude actually received (1 selected schema) |
-| **Total Tokens Saved** | Schema savings + response trim savings |
-| **Cache Hit Rate** | % of queries that returned cached answers |
-| **Real Groq Token Usage** | Exact token counts from Groq API (not estimates) |
-| **Cost Saved** | Estimated savings based on Sonnet 4.6 pricing |
-
-> **Note:** Cost estimates use Claude Sonnet 4.6 pricing ($3/1M tokens, ₹84/$). Actual cost depends on which model you use in Claude Desktop.
+|--------|--------------|
+| Schema Tokens — Estimated Baseline | Tokens Claude would receive with all tool schemas |
+| Schema Tokens — With Token-Optimise | Tokens Claude actually received (1 selected schema) |
+| Total Tokens Saved | Schema savings + response trim savings |
+| Cache Hit Rate | % of queries that returned cached answers |
+| Groq Cost (actual ✅) | Real measured cost at Groq pricing |
+| Claude Cost Saved (estimated ⚠️) | Range across Haiku→Opus (model unknown) |
+| Live USD/INR Rate | Fetched live every hour |
 
 
 
@@ -190,41 +210,45 @@ Access at `http://localhost:7738`
 
 ## 🐛 Troubleshooting
 
-**TOM already running error**
-./stop.sh
-./start.sh
+**Server not starting**
+```bash
+cat ~/.token_optimise/server.log
+```
 
 **Port 7737 in use**
 ```bash
 lsof -i :7737
 kill <PID>
+token-optimise
 ```
 
 **Claude not using token:execute**
 - Check Settings → Developer → MCP Servers — `token` should show green
-- Add explicit instruction at start of conversation (see above)
-
-**Tool not found for query**
-- Rephrase more specifically — e.g. "list files in /Users/name/Desktop" instead of "show my stuff"
-- Check `server_out.log` for similarity scores
+- Add explicit instruction at start of conversation
 
 **Dashboard offline**
 ```bash
-cat server_out.log | tail -50
+token-optimise
 ```
+**Want to change your API key or provider**
+```bash
+token-optimise --change-provider
+```
+
+**Check your current config**
+```bash
+cat ~/.token_optimise/.env
+```
+
+
 
 ---
 
 ## ⚠️ Known Limitations
 
-- **Claude's built-in tools take priority** — memory and web search bypass TOM because Claude prefers its native tools
+- **Claude's built-in tools take priority** — memory and web search bypass Token-Optimise because Claude prefers its native tools
 - **Cost estimates are approximate** — based on Sonnet 4.6 pricing; varies by model
-- **Windows not supported** — Mac and Linux only
-- **Tilde paths** — if a tool call fails with "file not found", use the full path e.g. `/Users/name/Desktop/file.pdf`
+- **PDF files only** — document indexing supports PDF format only
+
 
 ---
-
-## 📖 Docs
-
-- `docs/SETUP.md` — Detailed setup guide
-- `docs/QUICKSTART.md` — 5-minute quick start
